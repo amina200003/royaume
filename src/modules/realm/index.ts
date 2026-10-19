@@ -12,7 +12,9 @@ export interface RealmModuleDeps {
   clock?: () => number
 }
 
-/** Fabrique du module : assemble l'adaptateur, le service et l'API. */
+  // DETTE TECHNIQUE DT-002 (docs/qualite/dette-technique.md) : stockage en mémoire,
+  // remplacé au TD3 par le journal d'événements.
+  const repo = createInMemoryVillageRepository() */
 export function createRealmModule({ clock }: RealmModuleDeps = {}) {
   // Stockage provisoire en mémoire, remplacé au TD3 par le journal d'événements.
   const repo = createInMemoryVillageRepository()

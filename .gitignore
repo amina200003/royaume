@@ -42,3 +42,5 @@ next-env.d.ts
 
 #no data push
 .data
+
+!.env.example

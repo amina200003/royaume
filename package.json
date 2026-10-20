@@ -22,9 +22,11 @@
   "dependencies": {
     "@electric-sql/pglite": "0.5.9",
     "@hono/zod-validator": "0.9.1",
+    "better-auth": "1.7.7",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
     "next": "16.4.0",
+    "openssl": "^2.0.0",
     "pg": "8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",

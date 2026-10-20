@@ -33,10 +33,19 @@ export function getServer(): Server {
     const { db, ready } = createDatabase()
     const store = createEventStore(db)
     const auth = createBetterAuth(db)
-    globalForServer.royaumes = { api: createApi({ auth, store, ready }), auth, ready }
+    // Durée maximale d'un flux temps réel : 240 s par défaut, sous la limite de 300 s de Vercel.
+    // La variable STREAM_MAX_SECONDS permet de la raccourcir pour observer la reconnexion.
+    const maxStreamMs = Number(process.env.STREAM_MAX_SECONDS ?? 240) * 1000
+    globalForServer.royaumes = {
+      api: createApi({ auth, store, ready, realtime: { maxStreamMs } }),
+      auth,
+      ready,
+    }
   }
   return globalForServer.royaumes
-} /**
+}
+
+/**
  * Joueur connecté, pour les pages rendues sur le serveur.
  * Les pages n'appellent pas l'API : elles interrogent directement le port d'authentification,
  * à partir des en-têtes de la requête reçue par Next.js.

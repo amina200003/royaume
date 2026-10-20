@@ -6,6 +6,10 @@ import type { EventStore } from '@/platform/event-store/event-store'
 import { requireUser } from '@/platform/http/require-user'
 import type { AppEnv } from '@/platform/http/types'
 
+export interface RealtimeConfig {
+  maxStreamMs?: number
+  pollMs?: number
+}
 /** Dépendances fournies à l'application par son point d'entrée. */
 export interface ApiDeps {
   /** Authentification : Better Auth en fonctionnement réel, un adaptateur simplifié en test. */
@@ -16,6 +20,7 @@ export interface ApiDeps {
   ready?: Promise<void>
   /** Horloge de référence ; l'heure réelle par défaut. Remplacée dans les tests. */
   clock?: () => number
+  realtime?: RealtimeConfig
 }
 
 /**

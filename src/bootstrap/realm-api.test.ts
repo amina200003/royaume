@@ -1,116 +1,101 @@
-import { Hono } from 'hono'
-import { beforeEach, describe, expect, it } from 'vitest'
-import { createTestDatabase } from '@/platform/db/client'
-import { createEventStore, type EventStore } from '@/platform/event-store/event-store'
-import type { AppEnv } from '@/platform/http/types'
-// Si channel-policy et stream-api sont dans platform :
-import type { ChannelPolicy } from '@/platform/realtime/channel-policy'
-import { createRealtimeApi } from '@/platform/realtime/stream-api'
+import { describe, expect, it } from 'vitest'
 import { createTestApi } from './testing'
 
-// Règle de test : un joueur n'écoute que le canal « test-<joueur> ».
-const policy: ChannelPolicy = {
-  prefix: 'test-',
-  canSubscribe: (channel, userId) => channel === `test-${userId}`,
-}
+describe('API du module Village', () => {
+  it("renvoie une vue nulle tant qu'aucun village n'est fondé", async () => {
+    const { get } = await createTestApi()
+    const res = await get('/api/realm/village')
 
-let store: EventStore
-let app: Hono<AppEnv>
-
-beforeEach(async () => {
-  store = createEventStore(await createTestDatabase())
-  // Application minimale : le joueur est lu dans un en-tête, et les flux sont très courts.
-  app = new Hono<AppEnv>()
-    .use(async (c, next) => {
-      c.set('userId', c.req.header('x-test-user') ?? '')
-      await next()
-    })
-    .route(
-      '/stream',
-      createRealtimeApi({ store, policies: [policy], pollMs: 20, maxStreamMs: 150 }),
-    )
-})
-
-/** Ouvre un flux et lit sa réponse jusqu'à sa fermeture volontaire. */
-async function readStream(path: string, headers: Record<string, string> = {}) {
-  const res = await app.request(path, { headers: { 'x-test-user': 'alice', ...headers } })
-  return { status: res.status, body: await res.text() }
-}
-
-/**
- * Identifiants des messages domain-event d'un flux, dans l'ordre.
- * Les messages sont séparés par une ligne vide ; l'ordre de leurs champs est libre.
- */
-function eventIds(body: string): string[] {
-  return body
-    .split('\n\n')
-    .filter((message) => message.includes('event: domain-event'))
-    .map((message) => message.match(/^id: (\d+)$/m)?.[1] ?? '')
-}
-
-describe('Flux temps réel', () => {
-  it('annonce son ouverture avec un délai de reconnexion', async () => {
-    const { status, body } = await readStream('/stream/test-alice')
-
-    expect(status).toBe(200)
-    expect(body).toContain('event: ready')
-    expect(body).toContain('retry: 1000')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ view: null })
   })
 
-  it('transmet les événements du canal, identifiés par leur version', async () => {
-    await store.append('test-alice', 0, [
-      { type: 'A', data: {} },
-      { type: 'B', data: {} },
-    ])
-    const { body } = await readStream('/stream/test-alice')
+  it('fonde un village (201) puis refuse une seconde fondation (409)', async () => {
+    const { post } = await createTestApi()
 
-    expect(eventIds(body)).toEqual(['1', '2'])
-    expect(body).toContain('"type":"B"')
+    const first = await post('/api/realm/village', { name: 'Valombre' })
+    expect(first.status).toBe(201)
+    expect((await first.json()).view.name).toBe('Valombre')
+
+    const second = await post('/api/realm/village', { name: 'Autre' })
+    expect(second.status).toBe(409)
+    expect(await second.json()).toEqual({ error: { code: 'ALREADY_FOUNDED' } })
   })
 
-  it('transmet un événement enregistré pendant que le flux est ouvert', async () => {
-    const reading = readStream('/stream/test-alice')
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    await store.append('test-alice', 0, [{ type: 'A', data: {} }])
+  it('rejette une entrée invalide avant tout appel au service (400)', async () => {
+    const { post } = await createTestApi()
+    const res = await post('/api/realm/village', { name: 'V' })
 
-    expect(eventIds((await reading).body)).toEqual(['1'])
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('INVALID_INPUT')
   })
 
-  it('reprend après Last-Event-ID, sans perte ni doublon', async () => {
-    await store.append('test-alice', 0, [
-      { type: 'A', data: {} },
-      { type: 'B', data: {} },
-      { type: 'C', data: {} },
-    ])
-    const { body } = await readStream('/stream/test-alice', { 'last-event-id': '2' })
+  it('rejette un bâtiment inconnu (400)', async () => {
+    const { post } = await createTestApi()
+    await post('/api/realm/village', { name: 'Valombre' })
+    const res = await post('/api/realm/village/upgrade', { building: 'castle' })
 
-    expect(eventIds(body)).toEqual(['3'])
+    expect(res.status).toBe(400)
   })
 
-  it("refuse le canal d'un autre joueur (403)", async () => {
-    const { status } = await readStream('/stream/test-bob')
-    expect(status).toBe(403)
-  })
+  it('traduit un stock insuffisant en erreur 422, puis accepte avec le temps', async () => {
+    const { post, advance } = await createTestApi()
+    await post('/api/realm/village', { name: 'Valombre' })
 
-  it("refuse un canal qu'aucune règle ne couvre (403)", async () => {
-    const { status } = await readStream('/stream/inconnu-alice')
-    expect(status).toBe(403)
-  })
+    const tooEarly = await post('/api/realm/village/upgrade', { building: 'mine' })
+    expect(tooEarly.status).toBe(422)
+    expect((await tooEarly.json()).error.missing).toEqual({ stone: 10 })
 
-  it('fournit une route de repli sans diffusion progressive', async () => {
-    await store.append('test-alice', 0, [
-      { type: 'A', data: {} },
-      { type: 'B', data: {} },
-    ])
-    const res = await app.request('/stream/test-alice/events?after=1', {
-      headers: { 'x-test-user': 'alice' },
-    })
-    const { events } = await res.json()
-
-    expect(events.map((e: { type: string }) => e.type)).toEqual(['B'])
+    advance(2)
+    const later = await post('/api/realm/village/upgrade', { building: 'mine' })
+    expect(later.status).toBe(200)
+    expect((await later.json()).view.levels.mine).toBe(1)
   })
 })
-it('réserve le temps réel aux joueurs connectés (401)', async () => {
-  const { get } = await createTestApi()
-  expect((await get('/api/stream/village-alice', null)).status).toBe(401)
+
+describe("Contrôle d'accès à l'API du Village", () => {
+  it('refuse une lecture anonyme (401)', async () => {
+    const { get } = await createTestApi()
+    const res = await get('/api/realm/village', null)
+
+    expect(res.status).toBe(401)
+    expect((await res.json()).error.code).toBe('UNAUTHENTICATED')
+  })
+
+  it('refuse une commande anonyme, sans rien enregistrer', async () => {
+    const { get, post } = await createTestApi()
+    const res = await post('/api/realm/village', { name: 'Valombre' }, null)
+
+    expect(res.status).toBe(401)
+    // Aucun village n'a été fondé, pour aucun joueur.
+    expect(await (await get('/api/realm/village')).json()).toEqual({ view: null })
+  })
+
+  it('isole les villages des joueurs', async () => {
+    const { get, post } = await createTestApi()
+    await post('/api/realm/village', { name: 'Valombre' }, 'alice')
+    await post('/api/realm/village', { name: 'Clairval' }, 'bob')
+
+    expect((await (await get('/api/realm/village', 'alice')).json()).view.name).toBe('Valombre')
+    expect((await (await get('/api/realm/village', 'bob')).json()).view.name).toBe('Clairval')
+  })
+
+  it('laisse la route de santé accessible sans connexion', async () => {
+    const { get } = await createTestApi()
+    expect((await get('/api/system/health', null)).status).toBe(200)
+  })
+
+  it('autorise un joueur à écouter le canal de son village', async () => {
+    const { get, post } = await createTestApi()
+    await post('/api/realm/village', { name: 'Valombre' })
+    const res = await get('/api/stream/village-alice')
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('"type":"VillageFounded"')
+  })
+
+  it("refuse l'écoute du village d'un autre joueur (403)", async () => {
+    const { get } = await createTestApi()
+    expect((await get('/api/stream/village-bob', 'alice')).status).toBe(403)
+  })
 })

@@ -5,11 +5,9 @@ import type { AuthPort } from '@/platform/auth/port'
 import type { EventStore } from '@/platform/event-store/event-store'
 import { requireUser } from '@/platform/http/require-user'
 import type { AppEnv } from '@/platform/http/types'
+import type { ChannelPolicy } from '@/platform/realtime/channel-policy'
+import { createRealtimeApi, type RealtimeOptions } from '@/platform/realtime/stream-api'
 
-export interface RealtimeConfig {
-  maxStreamMs?: number
-  pollMs?: number
-}
 /** Dépendances fournies à l'application par son point d'entrée. */
 export interface ApiDeps {
   /** Authentification : Better Auth en fonctionnement réel, un adaptateur simplifié en test. */
@@ -20,7 +18,8 @@ export interface ApiDeps {
   ready?: Promise<void>
   /** Horloge de référence ; l'heure réelle par défaut. Remplacée dans les tests. */
   clock?: () => number
-  realtime?: RealtimeConfig
+  /** Réglages du temps réel (durée des flux, intervalle de lecture) ; raccourcis dans les tests. */
+  realtime?: Partial<Omit<RealtimeOptions, 'store' | 'policies'>>
 }
 
 /**
@@ -28,10 +27,13 @@ export interface ApiDeps {
  * la plateforme technique et l'ensemble des modules.
  * Ajouter un module consiste à l'instancier ici, puis à monter son API.
  */
-export function createApi({ auth, store, ready, clock }: ApiDeps) {
+export function createApi({ auth, store, ready, clock, realtime }: ApiDeps) {
   // 1. Instanciation des modules, avec les dépendances fournies par la plateforme.
   const system = createSystemModule()
   const realm = createRealmModule({ store, clock })
+
+  // Règles d'accès aux canaux temps réel, déclarées par les modules.
+  const policies: ChannelPolicy[] = [realm.channelPolicy]
 
   // 2. Application principale : toutes ses routes sont préfixées par /api.
   const app = new Hono<AppEnv>().basePath('/api')
@@ -60,10 +62,14 @@ export function createApi({ auth, store, ready, clock }: ApiDeps) {
   // 6. Routes réservées aux joueurs connectés : toute requête anonyme est refusée (401).
   //    Chaque nouveau module dont les routes sont réservées aux joueurs est ajouté ici.
   app.use('/realm/*', requireUser(auth))
+  app.use('/stream/*', requireUser(auth))
 
   // 7. Montage des sous-applications : chaque module reçoit son propre préfixe.
   //    Les appels sont chaînés afin que TypeScript conserve le type de chaque route.
-  return app.route('/system', system.api).route('/realm', realm.api)
+  return app
+    .route('/system', system.api)
+    .route('/realm', realm.api)
+    .route('/stream', createRealtimeApi({ store, policies, ...realtime }))
 }
 
 /** Type de l'application complète, déduit de ses routes. */

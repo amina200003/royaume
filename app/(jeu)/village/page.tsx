@@ -1,12 +1,13 @@
 import { headers } from 'next/headers'
-import { redirect } from 'next/navigation'
 import { currentUser } from '@/bootstrap/server'
+import { VillageScreen } from '@/modules/realm/ui'
 
-// La redirection dépend de la session : la page est évaluée à chaque requête.
-export const dynamic = 'force-dynamic'
-
-/** Page d'accueil : oriente vers le village si un joueur est connecté, vers la connexion sinon. */
-export default async function Home() {
+/**
+ * Page du Village. Elle transmet au composant l'identifiant du joueur connecté,
+ * qui sert à nommer le canal temps réel de son village.
+ * La mise en page du groupe (jeu) garantit qu'un joueur est connecté.
+ */
+export default async function VillagePage() {
   const user = await currentUser(await headers())
-  redirect(user ? '/village' : '/login')
+  return <VillageScreen userId={user?.id ?? ''} />
 }

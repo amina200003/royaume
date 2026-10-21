@@ -1,77 +1,67 @@
-import { Hono } from 'hono'
-import { describe } from 'zod/v4/core'
-import { createRealmModule } from '@/modules/realm'
-import { createSystemModule } from '@/modules/system'
-import type { AuthPort } from '@/platform/auth/port'
-import type { EventStore } from '@/platform/event-store/event-store'
-import { requireUser } from '@/platform/http/require-user'
-import type { AppEnv } from '@/platform/http/types'
-import type { ChannelPolicy } from '@/platform/realtime/channel-policy'
-import { createRealtimeApi, type RealtimeOptions } from '@/platform/realtime/stream-api'
+import { describe, expect, it } from 'vitest'
+import type { RankingEntry } from '@/modules/ranking/contracts'
+import { createTestApi } from './testing'
 
-/** Dépendances fournies à l'application par son point d'entrée. */
-export interface ApiDeps {
-  /** Authentification : Better Auth en fonctionnement réel, un adaptateur simplifié en test. */
-  auth: AuthPort
-  /** Journal d'événements, transmis aux modules qui l'utilisent. */
-  store: EventStore
-  /** Attendue avant chaque requête : résolue lorsque la base est prête (migrations). */
-  ready?: Promise<void>
-  /** Horloge de référence ; l'heure réelle par défaut. Remplacée dans les tests. */
-  clock?: () => number
-  /** Réglages du temps réel (durée des flux, intervalle de lecture) ; raccourcis dans les tests. */
-  realtime?: Partial<Omit<RealtimeOptions, 'store' | 'policies'>>
+type TestApi = Awaited<ReturnType<typeof createTestApi>>
+
+/** Lignes du classement, telles que l'API les renvoie. */
+async function ranking({ get }: TestApi) {
+  const res = await get('/api/ranking/players')
+  return ((await res.json()) as { entries: RankingEntry[] }).entries
 }
 
-/**
- * Racine de composition : le seul endroit du projet qui connaît à la fois
- * la plateforme technique et l'ensemble des modules.
- * Ajouter un module consiste à l'instancier ici, puis à monter son API.
- */
-export function createApi({ auth, store, ready, clock, realtime }: ApiDeps) {
-  // 1. Instanciation des modules, avec les dépendances fournies par la plateforme.
-  const system = createSystemModule()
-  const realm = createRealmModule({ store, clock })
-
-  // Règles d'accès aux canaux temps réel, déclarées par les modules.
-  const policies: ChannelPolicy[] = []
-
-  // 2. Application principale : toutes ses routes sont préfixées par /api.
-  const app = new Hono<AppEnv>().basePath('/api')
-
-  // 3. Aucune requête n'est traitée avant que la base de données soit prête.
-  //    La promesse n'est réellement attendue qu'au démarrage ; ensuite, elle est déjà résolue.
-  app.use(async (_c, next) => {
-    await ready
-    await next()
+describe('API du module Classement', () => {
+  it('refuse une requête anonyme (401)', async () => {
+    const api = await createTestApi()
+    expect((await api.get('/api/ranking/players', null)).status).toBe(401)
   })
 
-  // 4. Toute erreur non prévue produit une réponse JSON uniforme,
-  //    sans divulguer de détail technique au client.
-  app.onError((error, c) => {
-    console.error(error)
-    return c.json({ error: { code: 'INTERNAL', message: 'Erreur interne' } }, 500)
+  it("présente l'activité enregistrée par le Village et le Donjon", async () => {
+    const api = await createTestApi()
+    // Village : fondation, puis une amélioration une heure plus tard.
+    await api.post('/api/realm/village', { name: 'Valombre' })
+    api.advance(60)
+    await api.post('/api/realm/village/upgrade', { building: 'sawmill' })
+    // Donjon : une expédition en solo, abandonnée pendant une heure, donc perdue.
+    const { gameId } = await (await api.post('/api/dungeon/games', {})).json()
+    await api.post(`/api/dungeon/games/${gameId}/start`, {})
+    api.advance(60)
+    await api.post(`/api/dungeon/games/${gameId}/deadline`, {})
+
+    expect(await ranking(api)).toEqual([
+      {
+        rank: 1,
+        playerId: 'alice',
+        label: 'alice',
+        gamesPlayed: 1,
+        gamesWon: 0,
+        gold: 0,
+        upgrades: 1,
+        bestLoot: 0,
+      },
+    ])
   })
 
-  // Une adresse inconnue produit elle aussi une réponse JSON, et non une page HTML.
-  app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route inconnue' } }, 404))
+  it('annonce sur son canal les événements du classement, sans leurs données', async () => {
+    const api = await createTestApi()
+    await api.post('/api/dungeon/games', {})
 
-  // 5. Routes d'authentification (inscription, connexion, déconnexion, session),
-  //    entièrement traitées par l'adaptateur d'authentification.
-  app.on(['GET', 'POST'], '/auth/*', (c) => auth.handler(c.req.raw))
+    const res = await api.get('/api/stream/ranking/events?after=0')
+    const { events } = (await res.json()) as { events: { type: string }[] }
+    expect(events.map((event) => event.type)).toEqual(['GameCreated'])
+    // La graine de l'expédition, présente dans l'événement GameCreated, n'est pas transmise.
+    expect(JSON.stringify(events)).not.toContain('seed')
+  })
 
-  // 6. Routes réservées aux joueurs connectés : toute requête anonyme est refusée (401).
-  //    Chaque nouveau module dont les routes sont réservées aux joueurs est ajouté ici.
-  app.use('/realm/*', requireUser(auth))
-  app.use('/stream/*', requireUser(auth))
+  it("ne compte qu'une fois chaque événement, quel que soit le nombre de consultations", async () => {
+    const api = await createTestApi()
+    await api.post('/api/realm/village', { name: 'Valombre' })
+    api.advance(60)
+    await api.post('/api/realm/village/upgrade', { building: 'sawmill' })
 
-  // 7. Montage des sous-applications : chaque module reçoit son propre préfixe.
-  //    Les appels sont chaînés afin que TypeScript conserve le type de chaque route.
-  return app
-    .route('/system', system.api)
-    .route('/realm', realm.api)
-    .route('/stream', createRealtimeApi({ store, policies, ...realtime }))
-}
-
-/** Type de l'application complète, déduit de ses routes. */
-export type Api = ReturnType<typeof createApi>
+    const first = await ranking(api)
+    const second = await ranking(api)
+    expect(second).toEqual(first)
+    expect(second[0].upgrades).toBe(1)
+  })
+})

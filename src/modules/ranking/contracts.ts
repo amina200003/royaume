@@ -3,6 +3,9 @@
  * comme par l'interface.
  */
 
+/** Préfixe utilisé pour les canaux/flux des expéditions (games) */
+export const GAME_CHANNEL_PREFIX = 'dungeon-'
+
 /** Ligne du classement, telle qu'elle est présentée aux joueurs. */
 export interface RankingEntry {
   rank: number
@@ -34,3 +37,24 @@ export const RANKING_SIZE = 20
 
 /** Nom du canal temps réel du classement, qui ne correspond à aucun flux du journal. */
 export const RANKING_CHANNEL = 'ranking'
+
+/**
+ * Représente une expédition en attente de joueurs,
+ * telle qu'elle est renvoyée par l'API.
+ */
+export interface OpenGame {
+  /** L'identifiant de l'expédition (ex: "7f3a") */
+  gameId: string
+
+  /** Le nom du joueur ayant créé l'expédition */
+  hostName: string
+
+  /** Le nombre actuel de héros (joueurs + compagnons) dans l'expédition */
+  heroCount: number
+
+  /**
+   * Date de création (souvent un timestamp en millisecondes ou une chaîne ISO
+   * dans les contrats d'API, à adapter selon votre choix)
+   */
+  createdAt: number // ou string, ou Date
+}

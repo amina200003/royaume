@@ -13,12 +13,11 @@ export function createDrizzleOpenGamesReader(
 ): OpenGamesReader {
   return {
     async list(now) {
-      // Rattrapage à la lecture, comme pour le Classement.
+      // Rattrapage à la lecture
       await projections.catchUp(openGamesProjection)
 
-      // Les règles de la liste s'appliquent à la lecture : une expédition complète, ou ouverte
-      // depuis plus d'une heure, reste dans la table mais n'est pas proposée.
-      return db
+      // 1. On stocke le résultat de la requête
+      const games = await db
         .select({
           gameId: openGames.gameId,
           hostName: openGames.hostName,
@@ -27,9 +26,21 @@ export function createDrizzleOpenGamesReader(
         })
         .from(openGames)
         .where(
-          and(lt(openGames.heroCount, MAX_HEROES), gt(openGames.createdAt, now - OPEN_GAME_MS)),
+          and(
+            lt(openGames.heroCount, MAX_HEROES),
+            // CORRECTION ERREUR 2 : On convertit le nombre (now - OPEN_GAME_MS) en objet Date
+            // car Drizzle attend une Date pour comparer avec une colonne de type timestamp
+            gt(openGames.createdAt, new Date(now - OPEN_GAME_MS)),
+          ),
         )
         .orderBy(desc(openGames.createdAt))
+
+      // CORRECTION ERREUR 1 : On mappe le résultat pour transformer la Date en nombre (timestamp)
+      // afin de respecter l'interface OpenGame définie dans contracts.ts
+      return games.map((game) => ({
+        ...game,
+        createdAt: game.createdAt.getTime(),
+      }))
     },
   }
 }

@@ -3,7 +3,7 @@
  * selon le niveau de difficulté, la composition de l'expédition et le comportement des joueurs.
  * Exécution : pnpm exec tsx scripts/simulate-dungeon.ts
  */
-import { winRate } from '@/modules/dungeon'
+import { winRate } from '@/modules/dungeon/domain/simulation'
 
 /** Nombre d'expéditions simulées pour chaque mesure. */
 const SEEDS = 500

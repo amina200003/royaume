@@ -1,4 +1,4 @@
-import { integer, pgSchema, primaryKey, text } from 'drizzle-orm/pg-core'
+import { integer, pgSchema, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
 
 /** Schéma PostgreSQL du module Classement : il ne contient que des modèles de lecture. */
 export const ranking = pgSchema('ranking')
@@ -31,3 +31,17 @@ export const gamePlayers = ranking.table(
   },
   (t) => [primaryKey({ columns: [t.gameId, t.playerId] })],
 )
+
+export const openGames = pgTable('open_games', {
+  /** L'identifiant de l'expédition (ex: "7f3a") */
+  gameId: text('game_id').primaryKey(),
+
+  /** Nom du joueur hôte */
+  hostName: text('host_name').notNull(),
+
+  /** Nombre de héros (joueurs + compagnons) */
+  heroCount: integer('hero_count').notNull().default(1),
+
+  /** Date de création de l'expédition */
+  createdAt: timestamp('created_at').notNull(),
+})

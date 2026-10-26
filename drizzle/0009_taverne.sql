@@ -1,5 +1,7 @@
 CREATE SCHEMA "tavern";
 --> statement-breakpoint
+
+CREATE SCHEMA "dungeon";
 CREATE TABLE "dungeon"."open_games" (
 	"game_id" text PRIMARY KEY NOT NULL,
 	"host_name" text NOT NULL,

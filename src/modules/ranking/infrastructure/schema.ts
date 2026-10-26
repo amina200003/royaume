@@ -45,3 +45,10 @@ export const gamePlayers = ranking.table(
 //   /** Date de création de l'expédition */
 //   createdAt: timestamp('created_at').notNull(),
 // })
+
+export const openGames = ranking.table('open_games', {
+  gameId: text('game_id').primaryKey(),
+  hostName: text('host_name').notNull(),
+  heroCount: integer('hero_count').notNull().default(1),
+  createdAt: timestamp('created_at').notNull(),
+})

@@ -99,6 +99,13 @@
       "when": 1793028601106,
       "tag": "0013_furry_silver_centurion",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793028954714,
+      "tag": "0014_chubby_mad_thinker",
+      "breakpoints": true
     }
   ]
 }

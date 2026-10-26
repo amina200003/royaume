@@ -1,6 +1,6 @@
 CREATE SCHEMA "tavern";
 --> statement-breakpoint
-CREATE TABLE "open_games" (
+CREATE TABLE "dungeon"."open_games" (
 	"game_id" text PRIMARY KEY NOT NULL,
 	"host_name" text NOT NULL,
 	"hero_count" integer DEFAULT 1 NOT NULL,

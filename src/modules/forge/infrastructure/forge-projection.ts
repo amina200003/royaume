@@ -1,4 +1,3 @@
-import { eq } from 'drizzle-orm'
 import type { StoredEvent } from '@/platform/event-store/event-store'
 import type { Projection } from '@/platform/projection/projection'
 import { FORGE_STREAM_PREFIX } from '../contracts'

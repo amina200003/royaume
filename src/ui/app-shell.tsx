@@ -8,6 +8,7 @@ import { Entity } from './entity'
 /** Liens de navigation : chaque module ajouté au jeu y reçoit une entrée. */
 export const NAV = [
   { href: '/village', kind: 'village', label: 'Village' },
+  { href: '/forge', kind: 'forge', label: 'Forge' },
   { href: '/dungeon', kind: 'dungeon', label: 'Donjon' },
   { href: '/ranking', kind: 'ranking', label: 'Classement' },
   { href: '/market', kind: 'market', label: 'Marché' },

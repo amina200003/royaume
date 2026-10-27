@@ -8,6 +8,7 @@ export type EntityKind =
   | 'sawmill'
   | 'quarry'
   | 'mine'
+  | 'forge'
   | (string & {})
 
 export interface EntityProps {
@@ -25,6 +26,7 @@ const ENTITY_CONFIG: Record<string, { label: string; icon: string }> = {
   sawmill: { label: 'Scierie', icon: '🪓' },
   quarry: { label: 'Carrière', icon: '⛏️' },
   mine: { label: 'Mine', icon: '🪙' },
+  forge: { label: 'Forge', icon: '🧑🏼‍🔧' },
 }
 
 export function Entity({ kind, showLabel = false, className, children }: EntityProps) {

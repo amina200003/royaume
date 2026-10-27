@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CATALOG } from './catalog'
+import { CATALOG, RECIPES, type RecipeId } from './catalog'
 import { decide, type ForgeEvent, initialState, replay, toView } from './forge'
 
 // Instant de référence et conversions.
@@ -38,7 +38,7 @@ describe('Forge - catalogue', () => {
       initialState,
       {
         type: 'RequestCrafting',
-        recipeId: 'unknown' as any,
+        recipeId: 'unknown' as unknown as RecipeId,
         transferId: 'tx-1',
       },
       T0,
@@ -47,17 +47,18 @@ describe('Forge - catalogue', () => {
   })
 
   it('accepte chaque recette du catalogue', () => {
-    for (const recipeId of Object.keys(CATALOG)) {
+    for (const recipeId of RECIPES) {
       const decision = decide(
         initialState,
         {
           type: 'RequestCrafting',
-          recipeId: recipeId as any,
+          recipeId,
           transferId: `tx-${recipeId}`,
         },
         T0,
       )
       expect(decision.ok).toBe(true)
+      expect(CATALOG[recipeId].durationSeconds).toBeGreaterThan(0)
     }
   })
 })
@@ -290,10 +291,10 @@ describe('Forge - vue', () => {
     const view = toView(state, T0 + seconds(30))
 
     expect(view.crafting).not.toBeNull()
-    expect(view.crafting!.recipeId).toBe('wooden-sword')
-    expect(view.crafting!.recipeName).toBe('Épée en bois')
-    expect(view.crafting!.phase).toBe('crafting')
-    expect(view.crafting!.ready).toBe(false)
+    expect(view.crafting?.recipeId).toBe('wooden-sword')
+    expect(view.crafting?.recipeName).toBe('Épée en bois')
+    expect(view.crafting?.phase).toBe('crafting')
+    expect(view.crafting?.ready).toBe(false)
   })
 
   it('montre un inventaire vide au début', () => {

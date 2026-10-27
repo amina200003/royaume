@@ -154,6 +154,9 @@ export function evolve(state: ForgeState, event: ForgeEvent): ForgeState {
       }
 
     case 'ItemCollected':
+      // DETTE TECHNIQUE (docs/qualite/dette-technique.md, DT-012) : l'inventaire est conservé à
+      // la fois dans l'état rejoué du flux (pour la vue complète) et dans la projection
+      // forge.inventory, sans mécanisme d'instantané (snapshot) lorsque le flux s'allonge.
       return {
         ...state,
         ongoing: null,
@@ -245,6 +248,9 @@ export function decide(state: ForgeState, command: ForgeCommand, now: number): D
     }
 
     // Règle 6 : le joueur annule une fabrication en cours. Pas de remboursement.
+    // DETTE TECHNIQUE (docs/qualite/dette-technique.md, DT-013) : l'annulation est permise dès
+    // la phase 'reserving' sans message de compensation ; si le Village extrait traite le
+    // prélèvement après l'annulation, sa confirmation sera ignorée et les ressources perdues.
     case 'CancelCrafting': {
       if (!state.ongoing) {
         return { ok: false, error: { code: 'NOTHING_TO_CANCEL' } }

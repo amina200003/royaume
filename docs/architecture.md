@@ -12,8 +12,8 @@ dans le même commit que la modification qu'ils décrivent.
 ```mermaid
 flowchart TB
   joueur["Joueur<br/>[Personne]<br/>Joue depuis un navigateur,<br/>sur ordinateur ou sur téléphone"]
-  royaumes["Royaumes<br/>[Système logiciel]<br/>Jeu web multijoueur : village, donjon,<br/>classement, marché et taverne"]
-  joueur -->|"Gère son village, joue avec les autres joueurs,<br/>reçoit les changements en direct (HTTPS)"| royaumes
+  royaumes["Royaumes<br/>[Système logiciel]<br/>Jeu web multijoueur : village, forge, donjon,<br/>classement, marché et taverne"]
+  joueur -->|"Gère son village, fabrique des objets, joue avec les autres joueurs,<br/>reçoit les changements en direct (HTTPS)"| royaumes
 ```
 
 Royaumes ne dépend d'aucun système externe : il n'envoie aucun courrier électronique et
@@ -28,7 +28,7 @@ flowchart TB
   subgraph royaumes["Système Royaumes"]
     web["Interface web<br/>[Conteneur : React, dans le navigateur]<br/>Pages du jeu et page de connexion"]
     serveur["Application serveur<br/>[Conteneur : Next.js et Hono, fonctions Vercel, Francfort]<br/>Rendu des pages, API JSON,<br/>authentification, flux temps réel"]
-    base[("Base de données<br/>[Conteneur : PostgreSQL, Neon, Francfort]<br/>Schéma platform : journal, points de reprise,<br/>boîte d'envoi, registre des effacements<br/>Schéma identity : comptes et sessions<br/>Schémas ranking, dungeon et market :<br/>modèles de lecture<br/>Schéma tavern : messages et présence")]
+    base[("Base de données<br/>[Conteneur : PostgreSQL, Neon, Francfort]<br/>Schéma platform : journal, points de reprise,<br/>boîte d'envoi, registre des effacements<br/>Schéma identity : comptes et sessions<br/>Schémas ranking, dungeon, market et forge :<br/>modèles de lecture<br/>Schéma tavern : messages et présence")]
   end
   joueur -->|"Utilise"| web
   web -->|"Pages, appels de l'API avec le cookie de session<br/>(HTTPS, JSON)"| serveur
@@ -42,9 +42,9 @@ flowchart TB
 | Application serveur | Next.js, Hono, Better Auth, Drizzle | Contrôle d'accès, règles du jeu, enregistrement des événements, diffusion des flux |
 | Base de données | PostgreSQL (Neon en production, PGlite en local et en test) | Conservation du journal d'événements, des comptes et des sessions ; modèles de lecture des modules |
 
-Le journal d'événements est la seule source de vérité des modules Village, Donjon et Marché.
+Le journal d'événements est la seule source de vérité des modules Village, Donjon, Marché et Forge.
 La Taverne n'enregistre pas d'événements : ses tables sont sa propre source de vérité (ADR 0008).
-Les tables des schémas `ranking`, `dungeon` et `market` sont des modèles de lecture, dérivés du journal par des projections : elles peuvent
+Les tables des schémas `ranking`, `dungeon`, `market` et `forge` sont des modèles de lecture, dérivés du journal par des projections : elles peuvent
 être vidées puis reconstruites à tout moment, sans perte d'information.
 
 L'interface web ne communique jamais directement avec la base : toute lecture et toute
@@ -63,6 +63,7 @@ flowchart TB
   subgraph modules["src/modules"]
     system["system<br/>Route de santé"]
     realm["realm<br/>Village : domaine, service,<br/>dépôt fondé sur le journal, API, canal,<br/>version distante (remote.ts)"]
+    forge["forge<br/>Forge : domaine, service,<br/>dépôt fondé sur le journal, projection de l'inventaire,<br/>API, canal temps réel"]
     dungeon["dungeon<br/>Donjon : domaine et IA, service,<br/>dépôt fondé sur le journal, API, canal discret,<br/>projection des expéditions ouvertes"]
     ranking["ranking<br/>Classement : projection,<br/>lecture, API, canal global"]
     market["market<br/>Marché : orchestrateur de la saga,<br/>projection des offres, API, canal global"]
@@ -83,13 +84,14 @@ flowchart TB
   route --> server
   pages --> server
   server --> createapi
-  createapi --> system & realm & dungeon & ranking & market & tavern & auth & http & realtime & projection & outbox & privacy & cron
+  createapi --> system & realm & forge & dungeon & ranking & market & tavern & auth & http & realtime & projection & outbox & privacy & cron
   realm --> store & realtime & http & outbox
+  forge --> store & projection & realtime & http & outbox
   market --> store & projection & realtime & http & outbox
   dungeon --> store & projection & realtime & http
   ranking --> projection & realtime & http
   tavern --> realtime & http & db
-  realm & dungeon & market & ranking & tavern --> privacy
+  realm & forge & dungeon & market & ranking & tavern --> privacy
   privacy --> store
   auth --> privacy
   realtime --> store & http
@@ -104,8 +106,8 @@ flowchart TB
 
 Une flèche signifie « dépend de ». Le diagramme ne montre que les dépendances principales :
 `server.ts` crée également lui-même la base, le journal et l'adaptateur d'authentification,
-qu'il transmet à `create-api.ts`. Les modules `dungeon` et `ranking` écrivent directement
-dans leurs propres tables, au sein de la transaction fournie par le moteur des projections.
+qu'il transmet à `create-api.ts`. Les modules `dungeon`, `ranking`, `market` et `forge` écrivent directement
+dans leurs propres tables de projection, au sein de la transaction fournie par le moteur des projections.
 
 Le module `ranking` lit des événements du Village et du Donjon, mais n'importe aucun de leurs
 fichiers en dehors de leurs contrats : il ne dépend que de leur langage publié, c'est-à-dire
@@ -116,6 +118,41 @@ des messages dans la boîte d'envoi, que le distributeur remet aux gestionnaires
 La seule dépendance directe porte sur les contrats du Village (`REALM_TOPICS`, `ResourceAmounts`),
 qui décrivent ces messages. Chaque transaction ne modifie que les données d'un seul module,
 et la boîte d'envoi (ADR 0007).
+
+De la même manière, le module `forge` communique avec le module `realm` (Village) uniquement par
+des messages de la boîte d'envoi et son langage publié (`REALM_TOPICS.withdraw`, `TransferResult`),
+sans jamais importer l'intérieur du Village (ADR 0010). Lorsqu'un joueur lance une fabrication
+(`POST /api/forge/craft`), la Forge enregistre l'événement `CraftingRequested` dans le flux
+`forge-<userId>` ainsi qu'un message `realm.withdraw` dans la boîte d'envoi (avec
+`replyTo: 'forge.transfer-result'`). Le Village traite la demande de prélèvement sur le flux
+`village-<userId>` (`ResourcesWithdrawn` ou `WithdrawalRefused`) et dépose la réponse dans la boîte
+d'envoi à destination de `forge.transfer-result`. Le gestionnaire de la Forge (`messages.ts`)
+reçoit cette réponse et confirme le démarrage du chronomètre (`CraftingStarted`) ou annule la
+fabrication (`CraftingRefused`) en retenant les ressources manquantes.
+
+```mermaid
+sequenceDiagram
+  actor J as Joueur
+  participant F as Module Forge (forge)
+  participant ES as Journal & Boîte d'envoi (platform)
+  participant V as Module Village (realm)
+
+  J->>F: POST /api/forge/craft { recipeId }
+  F->>ES: append(forge-<userId>, CraftingRequested) + outbox(realm.withdraw)
+  F->>ES: dispatch()
+  ES->>V: handle(realm.withdraw { transferId, playerId, resources, replyTo: forge.transfer-result })
+  alt Stock suffisant dans le village
+    V->>ES: append(village-<userId>, ResourcesWithdrawn) + outbox(forge.transfer-result { outcome: withdrawn })
+    ES->>F: handle(forge.transfer-result { outcome: withdrawn })
+    F->>ES: append(forge-<userId>, CraftingStarted { startedAt, endsAt })
+    F-->>J: 201 Created { view (phase: crafting) }
+  else Stock insuffisant ou village non fondé
+    V->>ES: append(village-<userId>, WithdrawalRefused) + outbox(forge.transfer-result { outcome: refused, missing })
+    ES->>F: handle(forge.transfer-result { outcome: refused, missing })
+    F->>ES: append(forge-<userId>, CraftingRefused { missing })
+    F-->>J: 422 Unprocessable Entity { error: { code: CRAFTING_REFUSED, missing } }
+  end
+```
 
 Chaque module déclare ses données personnelles à la brique `privacy`, au moyen d'un fichier
 `personal-data.ts` : il les exporte, désigne les champs personnels de ses événements, et les
@@ -189,4 +226,6 @@ la distribution des messages restés en attente dans la boîte d'envoi, et l'app
 durées de conservation de la Taverne. Elle ne s'exécute que sur le déploiement de production.
 
 Le service Village extrait n'est pas déployé : en production, le Village s'exécute dans
+les fonctions Vercel, comme les autres modules (ADR 0009).
+
 les fonctions Vercel, comme les autres modules (ADR 0009).

@@ -77,6 +77,7 @@ Un module n'est accessible depuis l'extérieur que par ses entrées publiques : 
 | --- | --- | --- |
 | `system` | Route de santé | `/api/system` |
 | `realm` | Village : fondation, production de ressources, amélioration des bâtiments | `/api/realm` |
+| `forge` | Forge : fabrication d'objets à partir de recettes en consommant des ressources du village, inventaire | `/api/forge` |
 | `dungeon` | Donjon : expéditions de un à quatre héros, compagnons pilotés par l'ordinateur, deux niveaux de difficulté, combats en manches simultanées | `/api/dungeon` |
 | `ranking` | Classement des joueurs, construit à partir des événements du Village et du Donjon | `/api/ranking` |
 | `market` | Marché : échanges de ressources entre joueurs, par une saga orchestrée | `/api/market` |
@@ -86,8 +87,9 @@ Un module n'est accessible depuis l'extérieur que par ses entrées publiques : 
 
 Les changements sont diffusés aux navigateurs par des Server-Sent Events, à l'adresse
 `/api/stream/<canal>`. Chaque canal n'est accessible qu'aux joueurs connectés autorisés par
-la règle du module concerné. Le canal `village-<joueur>` n'est ainsi accessible qu'au
-propriétaire du village, et le canal `dungeon-<expédition>` aux seuls membres de l'expédition.
+la règle du module concerné. Les canaux `village-<joueur>` et `forge-<joueur>` ne sont ainsi
+accessibles qu'au joueur concerné, et le canal `dungeon-<expédition>` aux seuls membres de
+l'expédition.
 
 La plupart des canaux correspondent à un flux du journal d'événements. Les canaux `ranking`
 et `market` sont des canaux globaux : ils suivent, dans tout le journal, les événements qui
@@ -107,11 +109,12 @@ raccourcir cette durée pour observer la reconnexion.
 
 ## Échanges entre modules
 
-Une opération qui modifie les données de plusieurs modules, comme un échange du Marché, est
-une saga (ADR 0007) : chaque étape est une transaction locale à un module, et les modules
-communiquent par des messages enregistrés dans la boîte d'envoi (`platform.outbox`), dans la
-même transaction que leurs événements. Les messages sont distribués après chaque commande et
-chaque consultation du Marché, et chaque jour par la tâche planifiée `/api/cron/daily`. Leur livraison
+Une opération qui modifie les données de plusieurs modules, comme un échange du Marché ou le
+prélèvement des ressources d'une fabrication dans la Forge, est une saga (ADR 0007, ADR 0010) :
+chaque étape est une transaction locale à un module, et les modules communiquent par des
+messages enregistrés dans la boîte d'envoi (`platform.outbox`), dans la même transaction que
+leurs événements. Les messages sont distribués après chaque commande et chaque consultation du
+Marché ou de la Forge, et chaque jour par la tâche planifiée `/api/cron/daily`. Leur livraison
 est garantie au moins une fois : les gestionnaires de messages sont idempotents. Un message qui
 échoue dix fois est abandonné : la tâche quotidienne le signale, et le script
 `scripts/dead-letters.ts` permet de l'examiner, puis de le relancer une fois sa cause corrigée.
@@ -136,10 +139,13 @@ Le jeu traite des données personnelles, recensées dans le
 [registre des traitements](docs/rgpd/registre-traitements.md). Chaque joueur peut, depuis la
 page « Mes données » :
 
-- télécharger l'ensemble de ses données au format JSON (`GET /api/account/export`) ;
+- télécharger l'ensemble de ses données au format JSON (`GET /api/account/export`), incluant
+  notamment son village, ses expéditions, ses offres du Marché, ses messages de la Taverne,
+  ainsi que son inventaire et sa fabrication en cours dans la Forge ;
 - supprimer son compte (`DELETE /api/account`) : ses données sont supprimées des tables de
-  tous les modules, et son nom est remplacé par une mention neutre dans le journal
-  d'événements (ADR 0008). Chaque effacement est consigné dans `platform.erasures`.
+  tous les modules (dont `forge.inventory`), et son nom est remplacé par une mention neutre
+  dans le journal d'événements (ADR 0008). Chaque effacement est consigné dans
+  `platform.erasures`.
 
 Les messages de la Taverne sont conservés trente jours, et la présence d'un joueur deux
 minutes après son dernier signal. Ces durées sont appliquées à chaque lecture, et chaque jour
@@ -153,10 +159,11 @@ démarrage. Pour repartir d'une base vide, arrêtez le serveur et supprimez le r
 
 Les tests utilisent une base PGlite en mémoire, recréée pour chaque fichier de test.
 
-Le classement et la liste des expéditions ouvertes sont des modèles de lecture, tenus à jour
-par des projections à partir du journal d'événements (ADR 0006). Chaque projection est
-rattrapée à la consultation, et reconstruite automatiquement lorsque sa version change :
-une modification qui change le contenu de ses tables doit donc augmenter sa version.
+Le classement, la liste des expéditions ouvertes, les offres du Marché et l'inventaire de la
+Forge (`forge.inventory`) sont des modèles de lecture, tenus à jour par des projections à
+partir du journal d'événements (ADR 0006). Chaque projection est rattrapée à la consultation,
+et reconstruite automatiquement lorsque sa version change : une modification qui change le
+contenu de ses tables doit donc augmenter sa version.
 
 En production, la base est hébergée par Neon. Les migrations y sont appliquées lors de
 chaque déploiement, après les contrôles et avant la construction de l'application.
@@ -207,6 +214,13 @@ Une échéance du Donjon, de manche ou d'exploration, n'est enregistrée qu'à l
 suivante d'un membre de l'expédition ; toute lecture l'affiche néanmoins comme passée
 (ADR 0004). Les expéditions de quatre joueurs restent faciles, même au niveau difficile :
 le script de simulation permet de le mesurer.
+
+De même, dans la Forge, la fin d'une fabrication est évaluée paresseusement à la lecture :
+l'objet terminé n'est ajouté à l'inventaire (`ItemCollected`) que lorsque le joueur déclenche
+explicitement sa collecte (`POST /api/forge/collect`). Un joueur ne peut lancer qu'une seule
+fabrication à la fois (file d'attente de taille 1), l'annulation d'une fabrication en cours ne
+rembourse pas les ressources consommées, et les objets fabriqués ne confèrent pas encore de
+bonus dans le Donjon ni ne peuvent être échangés au Marché (ADR 0010).
 
 Le classement et la liste des expéditions ouvertes peuvent présenter, pendant quelques
 secondes, un état qui ne tient pas encore compte des derniers événements. La reconstruction

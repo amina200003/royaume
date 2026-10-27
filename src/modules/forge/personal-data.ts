@@ -20,6 +20,10 @@ export function createForgePersonalData(service: ForgeService, db: Db): Personal
       }
     },
 
+    // DETTE TECHNIQUE (docs/qualite/dette-technique.md, DT-011) : l'effacement supprime les
+    // lignes de la projection forge.inventory mais ne réécrit pas les événements ItemCollected
+    // du flux forge-<playerId> ; une reconstruction (rebuild) de la projection recréerait ces
+    // lignes sous l'identifiant pseudonymisé.
     async erase(playerId) {
       await db.delete(inventory).where(eq(inventory.playerId, playerId))
     },
